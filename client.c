@@ -166,14 +166,16 @@ void create_dir(const char *path) {
 
 // Carica un file dal client al server
 void upload_file_on_server(int socket_file_descriptor, char *o_path, char *f_path) {
-    char command = 'w';
-    send_command(socket_file_descriptor, command, o_path);
-
     FILE *file = open_file(f_path, "rb");
     if (file == NULL) {
         perror("Error opening local file");
         exit(EXIT_FAILURE);
     }
+    char command = 'w';
+    send_command(socket_file_descriptor, command, o_path);
+    printf("f_path -> %s\n", f_path);
+    printf("o_path -> %s\n", o_path);
+
 
     char buffer_ricezione[BUFFER_SIZE];
     ssize_t bytes_received = recv(socket_file_descriptor, buffer_ricezione, sizeof(buffer_ricezione), 0);
@@ -191,7 +193,7 @@ void upload_file_on_server(int socket_file_descriptor, char *o_path, char *f_pat
         exit(EXIT_FAILURE);
     }
 
-    char buffer[1024];
+    char buffer[BUFFER_SIZE];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
         if (send(socket_file_descriptor, buffer, bytes_read, 0) < 0) {
@@ -245,8 +247,6 @@ void download_file_from_server(int socket_file_descriptor, char *o_path, char *f
     fclose(file);
 }
 
-
-
 // Ottiene l'elenco dei file sul server e lo stampa sullo standard output
 void file_list_on_stout(int socket_file_descriptor, char *f_path) {
     char command = 'l';
@@ -267,9 +267,8 @@ void file_list_on_stout(int socket_file_descriptor, char *f_path) {
 
     if (bytes_received < 0) {
         perror("Error receiving file list");
-        exit(EXIT_FAILURE);
     } else {
         printf("File list received successfully.\n");
     }
-
 }
+
