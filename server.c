@@ -267,7 +267,7 @@ bool check_path(int client_socket, char* path) {
         fprintf(stderr, "Errore: è stato inserito un percorso assoluto\n");
         return false;
     }
-
+/*
     // Verifica se il percorso risultante è una directory
     struct stat st;
     if (stat(path, &st) == 0) {
@@ -277,7 +277,7 @@ bool check_path(int client_socket, char* path) {
             return false;
         }
     }
-
+*/
     // Il percorso è stato costruito correttamente e non è una directory
     return true;
 }
@@ -352,35 +352,34 @@ FILE* open_file(const char *path, const char *mode) {
     return file;
 }
 
-/*
-La funzione function_for_upload:
-- gestisce correttamente la ricezione di un file dal client per il caricamento sul server
-- riceve il percorso e la lunghezza del file remoto
-- verifica lo spazio disponibile sul disco
-- riceve i dati dal client e li scrive nel file specificato 
-- gestisce errori di spazio insufficiente su disco, apertura del file, ricezione dei dati
-1) client_socket -> socket del client connesso per la comunicazione
-2) ft_root_directory -> directory radice dove salvare il file ricevuto
- */
+// Funzione per estrarre il percorso della directory dal percorso completo del file
+char *extract_directory_path(char *file_path) {
+    char *dir_path = strdup(file_path);
+    char *last_slash = strrchr(dir_path, '/');
+    if (last_slash != NULL) {
+        *last_slash = '\0';
+    }
+    return dir_path;
+}
+
 int function_for_upload(int client_socket, char *path) {
     if (!check_path(client_socket, path)) {
         return 1;
     }
 
     // Creo la directory base se non esiste già
-    char dir_path[PATH_MAX];
-    strncpy(dir_path, path, PATH_MAX);
-    dirname(dir_path); // Prende solo il percorso della directory senza il nome del file
+    char* path_no_name = extract_directory_path(path);
+    printf("directory -> %s", path_no_name);
+    //dirname(dir_path); // Prende solo il percorso della directory senza il nome del file
 
-    create_dir(dir_path, false);
+    create_dir(path_no_name, false);
 
     printf("Ricevuto nome file remoto: %s\n", path);
 
     lockfile(path);
     printf("File lock acquisito per %s\n", path);
 
-    FILE *file; // puntatore al file da scrivere
-    file = open_file(path, "wb");
+    FILE *file = open_file(path, "wb");
     if (file == NULL) {
         perror("Error opening file");
         close(client_socket);
@@ -392,24 +391,21 @@ int function_for_upload(int client_socket, char *path) {
 
     char buffer[BUFFER_SIZE];
     ssize_t bytes_received;
-    // Ricevo lo stream di byte dal client
     while ((bytes_received = recv(client_socket, buffer, sizeof(buffer), 0)) > 0) {
-        // Scrivo i byte ricevuti nel file
+        printf("%s\n", buffer);
         fwrite(buffer, 1, bytes_received, file);
     }
 
-    // Se ritorna un valore minore di zero c'è un errore
     if (bytes_received < 0) {
         perror("Error receiving file data");
         fclose(file);
         unlockfile(path);
         return 1;
     } else {
-        // Altrimenti se arrivo fino alla fine significa che non ci sono state complicazioni
         printf("File %s salvato correttamente.\n", path);
     }
 
-    fclose(file); // Chiudo il file
+    fclose(file);
     unlockfile(path);
     printf("File lock rilasciato per %s\n", path);
 
@@ -420,11 +416,6 @@ int function_for_upload(int client_socket, char *path) {
 /*
 La funzione function_for_download:
 - gestisce la richiesta di download di un file dal server al client
-- riceve il percorso del file remoto dal client, compone il percorso completo se necessario
-- apre il file per la lettura binaria e invia i dati al client tramite il socket.
-- gestisce errori di apertura del file e di invio dei dati
-1)client_socket -> socket del client connesso per la comunicazione.
-2) ft_root_directory -> directory radice da cui iniziare la ricerca del file richiesto.
  */
 
 // Funzione per gestire il download dei file
@@ -491,49 +482,46 @@ La funzione function_to_send_file:
 2) ft_root_directory -> percorso della directory da cui ottenere l'elenco dei file.
  */
 
-int function_to_send_file(int client_socket, char *path) {
+void function_to_send_file(int client_socket, char *path) {
     if (!check_path(client_socket, path)) {
-        return 1;
+        return;
     }
-
+    char command[1024]; // buffer per memorizzare il comando da eseguire
     char buffer[2048]; // buffer per memorizzare i dati letti dal comando
     int bytes_sent; // variabile per memorizzare il numero di byte inviati
 
-    char filepath[BUFFER_SIZE] = "ls ";
-    strcat(filepath, path);
+    // comando per elencare tutti i file nella directory specificata, escludendo le sottodirectory
+    snprintf(command, sizeof(command), "ls -p %s | grep -v /", path);
     // eseguo il comando e apro una pipe per leggere l'output
-    FILE *fl = popen(filepath, "r");
+    FILE *fl = popen(command, "r");
 
-    // controllo se la pipe è stata aperta correttamente
+    //controllo se la pipe è stata aperta correttamente
     if (fl == NULL) {
         // stampo un messaggio di errore se non è stato possibile aprire la pipe e termino la funzione
         fprintf(stderr, "Error: could not open the pipe for the output\n");
-        return 1;
+        return;
     }
 
-    // leggo l'output del comando e lo invio al client
+    // leggo output del comando e lo invio al client
     while (fgets(buffer, sizeof(buffer), fl) != NULL) {
         // invio l'intero buffer 
-        bytes_sent = send(client_socket, buffer, strlen(buffer), 0);
-        // controllo se l'invio dei dati ha avuto successo
-        if (bytes_sent < 0) {
-            perror("Error sending file data"); // invio messaggio di errore in caso di fallimento
-            pclose(fl); // chiudo la pipe
-            return 1; // restituisce un valore di errore
-        }
+            bytes_sent = send(client_socket, buffer, strlen(buffer), 0);
+            //controllo se l'invio dei dati ha avuto successo
+            if (bytes_sent < 0) {
+                perror("Error sending file data");//invio messaggio  di errorein caso di fallimento
+                pclose(fl); //chiudo la pipe
+                return; //termino la funzione
+            }
     }
 
-    pclose(fl); // chiudo la pipe
+    pclose(fl); //chiudo la pipe
 
-    // invio un segnale di terminazione
+    //invio un segnale di terminazione
     send(client_socket, "\0", 1, 0);
 
     // chiudo la connessione del socket del client dopo aver inviato tutti i dati
     close(client_socket);
-
-    return 0; // restituisce un valore di successo
 }
-
 /*
 
 esempio
