@@ -267,7 +267,6 @@ bool check_path(int client_socket, char* path) {
         fprintf(stderr, "Errore: è stato inserito un percorso assoluto\n");
         return false;
     }
-/*
     // Verifica se il percorso risultante è una directory
     struct stat st;
     if (stat(path, &st) == 0) {
@@ -277,7 +276,7 @@ bool check_path(int client_socket, char* path) {
             return false;
         }
     }
-*/
+
     // Il percorso è stato costruito correttamente e non è una directory
     return true;
 }
@@ -373,13 +372,13 @@ int function_for_upload(int client_socket, char *path) {
     //dirname(dir_path); // Prende solo il percorso della directory senza il nome del file
 
     create_dir(path_no_name, false);
-
+    free(path_no_name);
     printf("Ricevuto nome file remoto: %s\n", path);
 
     lockfile(path);
-    printf("File lock acquisito per %s\n", path);
+    printf("File lock acquisito per %s", path);
 
-    FILE *file = open_file(path, "wb");
+    FILE *file = fopen(path, "w");
     if (file == NULL) {
         perror("Error opening file");
         close(client_socket);
@@ -391,6 +390,7 @@ int function_for_upload(int client_socket, char *path) {
 
     char buffer[BUFFER_SIZE];
     ssize_t bytes_received;
+
     while ((bytes_received = recv(client_socket, buffer, sizeof(buffer), 0)) > 0) {
         printf("%s\n", buffer);
         fwrite(buffer, 1, bytes_received, file);
