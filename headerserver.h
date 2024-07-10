@@ -60,5 +60,6 @@ void rimuovi_accapo(char *stringa);
 bool check_path(int client_socket, char* path);
 int function_for_upload(int client_socket, char *path);
 int function_for_download(int client_socket, char *path);
-int function_to_send_file(int client_socket, char *path);
+void function_to_send_file(int client_socket, char *path);
+char *extract_directory_path(char *file_path);
 #endif
