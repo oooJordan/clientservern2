@@ -39,18 +39,44 @@ int main(int argc, char *argv[]) {
     }
 
     // Verifica che tutte le informazioni principali siano presenti
-    if (server_address == NULL || server_port == 0 || f_path == NULL || command_management == 0) {
+    if (server_address == NULL || server_port == 0 || command_management == 0) {
         fprintf(stderr, "Error: missing arguments\n");
         exit(EXIT_FAILURE);
+    }
+
+    if(!is_valid_port(server_port))
+    {
+        fprintf(stderr, "Error: porta non valida\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if(!is_valid_ip_address(server_address))
+    {
+        fprintf(stderr, "Error: indirizzo inserito non valido\n");
+        exit(EXIT_FAILURE);
+    }
+
+    bool memory_allocated = false;
+    if (f_path == NULL){
+        if(command_management != 'l'){
+            fprintf(stderr, "Error: missing arguments\n");
+            exit(EXIT_FAILURE);
+        } else {
+            memory_allocated = true;
+            f_path = malloc(sizeof(char)*PATH_MAX);
+            strcpy(f_path, "");
+        }
     }
 
     bool o_path_not_exist=false;
     // Se il percorso remoto non è fornito dall'utente, usa basename del percorso locale
     if (o_path == NULL) {
-        char *o_path = malloc(sizeof(char)*250);
+        o_path = malloc(sizeof(char)*250);
         strcpy(o_path, f_path);
         o_path_not_exist=true;
     }
+
+
 
     // Creazione della connessione TCP/IP al server
     int socket_file_descriptor = create_connection(server_address, server_port);
@@ -78,9 +104,23 @@ int main(int argc, char *argv[]) {
     {
         free(o_path);
     }
-
+    if(memory_allocated)
+    {
+        free(f_path);
+    }
     close(socket_file_descriptor); // Chiude il descrittore del socket
     return 0;
+}
+
+// Funzione per validare il numero di porta
+bool is_valid_port(int port) {
+    return (port > 0 && port <= 65535);
+}
+
+// Funzione per validare l'indirizzo IP
+bool is_valid_ip_address(const char *ip) {
+    struct sockaddr_in sa;
+    return inet_pton(AF_INET, ip, &(sa.sin_addr)) != 0;
 }
 
 // Crea una connessione TCP/IP al server
@@ -119,10 +159,11 @@ int create_connection(const char *server_address, int server_port) {
 }
 
 // Invia un comando specifico al server tramite il socket identificato da socket_file_descriptor
-void send_command(int socket_file_descriptor, char command, char* path_file_remoto) {
+void send_command(int client_socket, char command, char* path_file_remoto) {
     char send_path[PATH_MAX];
     snprintf(send_path, sizeof(send_path), "%c %s\n", command, path_file_remoto);
-    if (send(socket_file_descriptor, &send_path, sizeof(send_path), 0) < 0) {
+    printf("send path = '%s'\n", send_path);
+    if (send(client_socket, &send_path, sizeof(send_path), 0) < 0) {
         perror("Error sending command");
         exit(EXIT_FAILURE);
     }
@@ -132,7 +173,7 @@ void send_command(int socket_file_descriptor, char command, char* path_file_remo
 FILE* open_file(const char *path, const char *mode) {
     FILE *file = fopen(path, mode);
     if (file == NULL) {
-        perror("Error opening file");
+        perror("Error opening the client's file");
         exit(EXIT_FAILURE);
     }
     return file;
@@ -165,83 +206,109 @@ void create_dir(const char *path) {
 
 
 // Carica un file dal client al server
-void upload_file_on_server(int socket_file_descriptor, char *o_path, char *f_path) {
-    FILE *file = open_file(f_path, "rb");
-    if (file == NULL) {
-        perror("Error opening local file");
-        exit(EXIT_FAILURE);
-    }
+void upload_file_on_server(int socket_client_w, char *remote_path, char *local_path) {
+    // Apro il file locale in modo da controllare se esiste prima di mandare la richiesta al server
+    FILE *file = open_file(local_path, "rb");
+
     char command = 'w';
-    send_command(socket_file_descriptor, command, o_path);
-    printf("f_path -> %s\n", f_path);
-    printf("o_path -> %s\n", o_path);
+    send_command(socket_client_w, command, remote_path);
 
-
-    char buffer_ricezione[BUFFER_SIZE];
-    ssize_t bytes_received = recv(socket_file_descriptor, buffer_ricezione, sizeof(buffer_ricezione), 0);
-    if(bytes_received<0)
-    {
-        perror("errore richiesta non inviata");
-        close(socket_file_descriptor);
-        exit(EXIT_FAILURE);
-    }else if(strncmp(buffer_ricezione, "OK", 2)==0)
-    {
-        printf("ok ricevuto");
-    }else{
-        perror("errore nella richiesta ");
-        close(socket_file_descriptor);
-        exit(EXIT_FAILURE);
-    }
 
     char buffer[BUFFER_SIZE];
-    size_t bytes_read;
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        if (send(socket_file_descriptor, buffer, bytes_read, 0) < 0) {
-            perror("Error sending file data");
+    ssize_t bytes_received = recv(socket_client_w, buffer, sizeof(buffer), 0);
+    if(bytes_received<0) {
+        perror("errore richiesta non inviata");
+        close(socket_client_w);
+        exit(EXIT_FAILURE);
+    }
+
+    if((strncmp(buffer, "OK", 2) == 0)) {
+            printf("ok ricevuto dal server\n");
+        }
+    else{
+        if (strncmp(buffer, "PATH_NON_VALIDO", 15) == 0){
+                fprintf(stderr, "Il path '%s' non è valido\n", remote_path);
+            if(strncmp(buffer, "IL_PATH_È_UNA_DIRECTORY", 23) == 0){
+                fprintf(stderr, "Il path '%s' è una directory\n", remote_path);
+            }else{
+                perror("errore nella richiesta ");
+            }
             fclose(file);
+            close(socket_client_w);
             exit(EXIT_FAILURE);
         }
     }
+   
+
+    size_t bytes_read;
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        if (send(socket_client_w, buffer, bytes_read, 0) < 0) {
+            perror("Errore nell'invio dei dati della PUT\n");
+            fclose(file);
+            close(socket_client_w);
+        }
+    }
+
+
     if(ferror(file)){
         perror("errore nella lettura del file\n");
     }else{
-        printf("File %s arrivato come %s \n", f_path, o_path);
+        printf("File %s arrivato come %s \n", local_path, remote_path);
     }
 
     fclose(file);
     printf("Upload complete.\n");
 }
-void download_file_from_server(int socket_file_descriptor, char *o_path, char *f_path) {
-    // Invio del comando al server (opzionale se già implementato)
+
+
+void download_file_from_server(int client_socket_r, char *local_path, char *remote_path) {
     char command = 'r';
-    send_command(socket_file_descriptor, command, f_path);
+    send_command(client_socket_r, command, remote_path);
 
+    // Buffer per ricevere i dati
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_received;
 
-    create_dir(o_path);
-    // Apertura del file locale per la scrittura in modalità binaria
-    FILE *file = fopen(o_path, "wb");
-    if (file == NULL) {
-        perror("Error opening local file");
+    // Ricezione della risposta dal server
+    bytes_received = recv(client_socket_r, buffer, sizeof(buffer), 0);
+
+    // Gestione della risposta ricevuta
+    if (bytes_received < 0) {
+        perror("Errore durante la ricezione della risposta dal server");
+        close(client_socket_r);
         exit(EXIT_FAILURE);
     }
 
-    // Ricezione dei dati del file dal server e scrittura nel file locale
-    char buffer[BUFFER_SIZE];
-    ssize_t bytes_received;
-    while ((bytes_received = recv(socket_file_descriptor, buffer, sizeof(buffer), 0)) > 0) {
-        size_t bytes_written = fwrite(buffer, 1, bytes_received, file);
-        if (bytes_written < bytes_received) {
-            perror("Error writing to local file");
-            fclose(file);
-            exit(EXIT_FAILURE);
+    // Controllo del tipo di risposta
+    if (strncmp(buffer, "PATH_NON_VALIDO", 15) == 0) {
+        fprintf(stderr, "Il path '%s' non è valido\n", remote_path);
+        close(client_socket_r);
+        exit(EXIT_FAILURE);
+    } else if (strncmp(buffer, "IL_PATH_È_UNA_DIRECTORY", 23) == 0) {
+        fprintf(stderr, "Il path '%s' è una directory\n", remote_path);
+        close(client_socket_r);
+        exit(EXIT_FAILURE);
+    }
+
+    // Se non si è verificato un errore, si procede con la creazione del file locale
+    create_dir(local_path);
+    FILE *file = open_file(local_path, "wb");
+
+    // Scrittura dei dati ricevuti nel file locale
+    fwrite(buffer, 1, bytes_received, file);
+
+    while ((bytes_received = recv(client_socket_r, buffer, sizeof(buffer), 0)) > 0) {
+        if (strlen(buffer) > 0){
+            fwrite(buffer, 1, bytes_received, file);
         }
     }
 
-    if (bytes_received < 0) {
-        perror("Error receiving file data");
+    if (ferror(file)) {
+        perror("Errore durante la scrittura del file locale");
+        fclose(file);
         exit(EXIT_FAILURE);
     } else {
-        printf("File %s scaricato correttamente come %s.\n", f_path, o_path);
+        printf("File %s scaricato correttamente come %s.\n", remote_path, local_path);
     }
 
     fclose(file);
