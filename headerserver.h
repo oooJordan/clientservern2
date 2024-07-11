@@ -49,17 +49,18 @@ FileLock *file_locks = NULL;
 
 // Prototipi di funzione
 void *thread_function(void *arg);
-void command_client(int client_socket, const char *ft_root_directory);
+void command_client(int client_socket);
 FileLock *get_file_lock(const char *file);
 void release_file_lock(FileLock *lock);
 void lockfile(const char *file);
 void unlockfile(const char *file);
-int create_dir(const char *ft_root_directory, bool main_folder_server);
+int create_dir(const char *ft_root_directory);
 
 void rimuovi_accapo(char *stringa);
-bool check_path(int client_socket, char* path);
+bool check_path(char* path);
 int function_for_upload(int client_socket, char *path);
 int function_for_download(int client_socket, char *path);
 void function_to_send_file(int client_socket, char *path);
 char *extract_directory_path(char *file_path);
+bool check_dir(char *path);
 #endif
