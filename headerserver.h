@@ -24,12 +24,6 @@
 #define THREAD_POOL_SIZE 10 // Dimensione del pool di thread
 #define BUFFER_SIZE 4096 // Dimensione del buffer
 
-// Struct che memorizza le informazioni necessarie per gestire la connessione e le operazioni del client
-typedef struct {
-    int client_socket; // File descriptor associato al socket del client
-    char *ft_root_directory; // Puntatore a una stringa che rappresenta la root directory del server FTP
-} client_data;
-
 // Struct che rappresenta un lock associato a un file
 typedef struct FileLock {
     char file[1024]; // Nome del file
@@ -39,10 +33,7 @@ typedef struct FileLock {
 } FileLock;
 
 // Variabili globali
-client_data client_queue[MAX_CLIENTS]; // Coda circolare di clienti da gestire
-int client_count = 0;; // Numero attuale di client nella coda
-pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex per garantire l'accesso sicuro alla coda
-sem_t queue_sem; // Semaforo per notificare l'arrivo di nuovi client nella coda
+int socket_file_descriptor;
 pthread_mutex_t file_locks_mutex = PTHREAD_MUTEX_INITIALIZER;
 FileLock *file_locks = NULL;
 
