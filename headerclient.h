@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <libgen.h> //per usare la funzione basename()
 #include <linux/limits.h>
 #include <stdbool.h>
 #include <sys/stat.h>
