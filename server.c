@@ -1,45 +1,40 @@
 #include "headerserver.h"
 
-int socket_file_descriptor;
 
 int main(int argc, char *argv[]) {
     int opt;
-    char *server_address = NULL; // puntatore a carattere, inizialmente NULL, memorizza l'indirizzo del server
-    char *ft_root_directory = NULL; // puntatore a carattere, inizialmente NULL, memorizza la directory radice del server FTP
-    int server_port = 0; // numero di porta del server, inizialmente 0
+    char *server_address = NULL; 
+    char *ft_root_directory = NULL;
+    int server_port = 0;
 
-    // getopt analizza gli argomenti della linea di comando
-    while ((opt = getopt(argc, argv, "a:p:d:")) != -1) { // ':' indica che l'opzione richiede un argomento
+    while ((opt = getopt(argc, argv, "a:p:d:")) != -1) {
         switch (opt) {
             case 'a':
-                server_address = optarg; // optarg punta alla stringa dell'argomento dell'opzione corrente
+                server_address = optarg;
                 break;
             case 'p':
-                server_port = atoi(optarg); // atoi converte la stringa in un intero (numero di porta)
+                server_port = atoi(optarg);
                 break;
             case 'd':
-                ft_root_directory = optarg; // imposto la directory radice del server FTP 
+                ft_root_directory = optarg;
                 break;
             default:
                 fprintf(stderr, "Usage: %s -a server_address -p server_port -d ft_root_directory\n", argv[0]);
-                exit(EXIT_FAILURE); // stampo l'uso corretto e esco con EXIT_FAILURE se le opzioni sono errate
+                exit(EXIT_FAILURE);
         }
     }
 
-    // controllo se sono stati forniti tutti gli argomenti obbligatori
-    if (server_address == NULL || server_port == 0 ) {
+    if (server_address == NULL || server_port == 0) {
         fprintf(stderr, "Error: missing arguments\n");
-        exit(EXIT_FAILURE); // stampo un errore e esco con EXIT_FAILURE in mancanza di informazioni obbligatorie
+        exit(EXIT_FAILURE);
     }
 
-    if(create_dir(ft_root_directory) != 0)
-    {
+    if(create_dir(ft_root_directory) != 0) {
         perror("Errore nella creazione delle directory");
         exit(EXIT_FAILURE);
     }
 
-    if(chdir(ft_root_directory)!=0)
-    {
+    if(chdir(ft_root_directory)!=0) {
         perror("Errore dirante il cambio della directory");
         exit(EXIT_FAILURE);
     }
@@ -48,120 +43,64 @@ int main(int argc, char *argv[]) {
     int optval = 1;
 
     printf("Creazione del socket...\n");
-    // Crea un socket TCP(SOCK_STREAM) IPv4 (AF_INET)
     socket_file_descriptor = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_file_descriptor < 0) {
         perror("Error during creation socket");
-        exit(EXIT_FAILURE); // stampo un errore e esco con EXIT_FAILURE se non è possibile creare il socket
+        exit(EXIT_FAILURE);
     }
-
-    /*
-    - l'opzione SO_REUSEADDR | SO_REUSEPORT permette al socket di riutilizzare l'indirizzo e la porta 
-                assegnati più rapidamente, riducendo il tempo di inattività e migliorando l'efficienza 
-                dell'applicazione nella gestione delle connessioni di rete
-    - SOL_SOCKET ->  livello di protocollo del socket
-    - &optval -> puntatore al valore da impostare per l'opzione
-
-    setsockopt -> permette di impostare delle opzioni su un socket già creato
-    */
 
     if (setsockopt(socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &optval, sizeof(optval))) {
         perror("Error during reuse");
-        exit(EXIT_FAILURE); // stampo un errore e esco con EXIT_FAILURE se non è possibile inserire opzioni al socket
+        exit(EXIT_FAILURE);
     }
 
-    //BIND -> associazione di un indirizzo locale (IP e numero di porta) a un socket
     printf("Binding del socket...\n");
-    // inizializzo la struttura server_addr per il bind del socket
     memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET; // famiglia degli indirizzi: IPv4
-    server_addr.sin_addr.s_addr = inet_addr(server_address); // indirizzo IP del server
-    server_addr.sin_port = htons(server_port); // porta del server
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(server_address);
+    server_addr.sin_port = htons(server_port);
 
-    //server_addr contiene quindi indirizzo IP e numero di porta
-
-    // eseguo il bind
-    if (bind(socket_file_descriptor, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) { //socket_file_descriptor rappresenta il socket stesso all'interno del programma
+    if (bind(socket_file_descriptor, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         perror("Error during binding");
-        exit(EXIT_FAILURE); // stampo un errore e esco con EXIT_FAILURE se non è possibile eseguire il bind del socket
+        exit(EXIT_FAILURE);
     }
 
     printf("Avvio dell'ascolto sul socket...\n");
-    // metto il socket in ascolto per le connessioni in entrata
-    if (listen(socket_file_descriptor, 10) < 0) { //max 10 connessioni simultanee
+    if (listen(socket_file_descriptor, 10) < 0) {
         perror("Error listening for connection");
-        exit(EXIT_FAILURE); // stampo un errore e esco con EXIT_FAILURE se non è possibile mettere il socket in ascolto
+        exit(EXIT_FAILURE);
     }
 
     printf("Server in ascolto su %s:%d\n", server_address, server_port);
 
-    // Inizializza il semaforo
-    sem_init(&queue_sem, 0, 0);
-
-    // Crea il pool di thread
-    pthread_t thread_pool[THREAD_POOL_SIZE];
-    for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-        if (pthread_create(&thread_pool[i], NULL, thread_function, NULL) != 0) {
-            perror("Failed to create thread");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    // ciclo infinito: accetta le connessioni e gestisce i client
     while (1) {
-        int client_socket;
-        struct sockaddr_in client_addr; //struttura che contiene le informazioni sull'indirizzo del client che si connette
-        socklen_t client_addr_len = sizeof(client_addr); //inizializzo la lunghezza dell'indirizzo del client con sizeof(client_addr)
+        int *client_socket = malloc(sizeof(int));
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_len = sizeof(client_addr);
         printf("In attesa di connessione...\n");
 
-        // accetta una connessione in entrata
-        //client_addr viene riempita con le informazioni sull'indirizzo del client
-        client_socket = accept(socket_file_descriptor, (struct sockaddr *)&client_addr, &client_addr_len);
-        if (client_socket < 0) { //se non riesce a connettersi stampa un messaggio di errore
+        if((*client_socket = accept(socket_file_descriptor, (struct sockaddr *)&client_addr, &client_addr_len)) == -1) {
             perror("Error accepting connection");
-            exit(EXIT_FAILURE); // stampo un errore e esco con EXIT_FAILURE se non è possibile accettare la connessione
+            close(socket_file_descriptor);
+            free(client_socket);
+            exit(EXIT_FAILURE);
         }
 
-        printf("Client connesso da %s\n", inet_ntoa(client_addr.sin_addr)); //inet_ntoa -> trasforma l'indirizzo ip da binario a decimale puntato
-        pthread_mutex_lock(&queue_mutex);
-        if (client_count < MAX_CLIENTS) {
-            client_queue[client_count].client_socket = client_socket;
-            client_queue[client_count].ft_root_directory = strdup(ft_root_directory);
-            client_count++;
-            sem_post(&queue_sem);
-        } else {
-            printf("Troppi client non posso accettare la connessione\n");
-            close(client_socket);
-        }
-        pthread_mutex_unlock(&queue_mutex);
+        printf("Client connesso da %s\n", inet_ntoa(client_addr.sin_addr));
+        
+        pthread_t thread;
+        pthread_create(&thread, NULL, thread_function, client_socket);
+        pthread_detach(thread);
     }
-
-    for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-        pthread_cancel(thread_pool[i]);
-        pthread_join(thread_pool[i], NULL);
-    }
-    sem_destroy(&queue_sem);
 
     return 0;
 }
 
-
 void *thread_function(void *arg) {
-    while (1) {
-        sem_wait(&queue_sem);
-
-        pthread_mutex_lock(&queue_mutex);
-        client_data client = client_queue[0];
-        for (int i = 0; i < client_count - 1; i++) {
-            client_queue[i] = client_queue[i + 1];
-        }
-        client_count--;
-        pthread_mutex_unlock(&queue_mutex);
-
-        command_client(client.client_socket);
-        free(client.ft_root_directory);
-        close(client.client_socket);
-    }
+    int client_socket = *((int *)arg);
+    free(arg);
+    command_client(client_socket);
+    close(client_socket);
     return NULL;
 }
 
@@ -324,6 +263,9 @@ int function_for_upload(int client_socket, char *path) {
     create_dir(path_no_name);
     printf("Ricevuto nome file remoto: %s\n", path);
 
+    lockfile(path);
+    printf("File locked\n");
+
     FILE *file = open_file(path, "wb");
 
     send(client_socket, "OK", 2, 0);
@@ -341,16 +283,17 @@ int function_for_upload(int client_socket, char *path) {
     if (bytes_received < 0) {
         perror("Error receiving file data");
         fclose(file);
-        //unlockfile(path);
+        unlockfile(path);
         close(client_socket);
         return 1;
     }
     // Chiudi il file dopo aver ricevuto tutti i dati
     fclose(file);
     close(client_socket);
-    //unlockfile(path);
+    unlockfile(path);
 
     printf("File %s salvato correttamente.\n", path);
+    printf("File unlocked\n");
 
     return 0;
 }
@@ -380,8 +323,8 @@ int function_for_download(int client_socket, char *path) {
     printf("Percorso remoto ricevuto dal client: %s\n", path);
 
     // Blocco del file
-    //lockfile(path);
-    //printf("File locked\n");
+    lockfile(path);
+    printf("File locked\n");
 
     // Apertura del file per la lettura in modalità binaria
     FILE *file = open_file(path, "rb");
@@ -396,7 +339,7 @@ int function_for_download(int client_socket, char *path) {
                 perror("Error sending file data\n");
                 fclose(file);
                 close(client_socket);
-                //unlockfile(path); // Assicurati di sbloccare il file anche in caso di errore
+                unlockfile(path); // Assicurati di sbloccare il file anche in caso di errore
                 return 1; // Restituisce un valore intero in caso di errore
             }
         }
@@ -405,15 +348,15 @@ int function_for_download(int client_socket, char *path) {
     if (ferror(file)) {
         perror("Error reading file");
         fclose(file);
-        //unlockfile(path); // Assicurati di sbloccare il file anche in caso di errore
+        unlockfile(path); // Assicurati di sbloccare il file anche in caso di errore
         return 1; // Restituisce un valore intero in caso di errore
     } else {
         printf("File %s inviato correttamente.\n", path);
     }
 
     fclose(file);  // Chiudo il file alla fine della lettura
-    //unlockfile(path);
-    //printf("File unlocked\n");
+    unlockfile(path);
+    printf("File unlocked\n");
 
     return 0; // Restituisce un valore intero di successo
 }
@@ -471,25 +414,6 @@ void function_to_send_file(int client_socket, char *path) {
     // chiudo la connessione del socket del client dopo aver inviato tutti i dati
     close(client_socket);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 //questa funzione cerca un lock associato a un file specifico. Se non trova un lock esistente, ne crea uno nuovo
