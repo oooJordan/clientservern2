@@ -21,7 +21,6 @@
 
 
 #define MAX_CLIENTS 10 // Massimo numero di client che possono essere gestiti contemporaneamente
-#define THREAD_POOL_SIZE 10 // Dimensione del pool di thread
 #define BUFFER_SIZE 4096 // Dimensione del buffer
 
 // Struct che rappresenta un lock associato a un file
