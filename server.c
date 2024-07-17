@@ -1,101 +1,136 @@
 #include "headerserver.h"
+#include "funzioni_condivise.h"
 
 
 int main(int argc, char *argv[]) {
-    int opt;
-    char *server_address = NULL; 
-    char *ft_root_directory = NULL;
-    int server_port = 0;
+    int opt; //variabile per memorizzare il carattere dell'opzione corrente restituito da getopt
+    char *server_address = NULL; //indirizzo del server
+    char *ft_root_directory = NULL; //directory radice del server
+    int server_port = 0; //porta del server
 
+    // analisi degli argomenti della linea di comando con getopt
     while ((opt = getopt(argc, argv, "a:p:d:")) != -1) {
         switch (opt) {
             case 'a':
-                server_address = optarg;
+                server_address = optarg; //imposta l'indirizzo del server
                 break;
             case 'p':
-                server_port = atoi(optarg);
+                server_port = atoi(optarg); // converte la porta del server da stringa a intero
                 break;
             case 'd':
-                ft_root_directory = optarg;
+                ft_root_directory = optarg; // imposta la directory radice del file transfer
                 break;
             default:
+                // stampa un messaggio sullo standard error se viene incontrata un'opzione non valida
                 fprintf(stderr, "Usage: %s -a server_address -p server_port -d ft_root_directory\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
-
+    //argomenti essenziali
     if (server_address == NULL || server_port == 0) {
         fprintf(stderr, "Error: missing arguments\n");
         exit(EXIT_FAILURE);
     }
+    if(!is_valid_port(server_port))
+    {
+        fprintf(stderr, "Error: porta non valida\n");
+        exit(EXIT_FAILURE);
+    }
 
+    if(!is_valid_ip_address(server_address))
+    {
+        fprintf(stderr, "Error: indirizzo inserito non valido\n");
+        exit(EXIT_FAILURE);
+    }
+
+    //crea la directory radice se non esiste
     if(create_dir(ft_root_directory) != 0) {
         perror("Errore nella creazione delle directory");
         exit(EXIT_FAILURE);
     }
 
+    //imposta la directory radice come current working directory
     if(chdir(ft_root_directory)!=0) {
         perror("Errore dirante il cambio della directory");
         exit(EXIT_FAILURE);
     }
 
-    struct sockaddr_in server_addr;
-    int optval = 1;
+    struct sockaddr_in server_addr; // struttura per memorizzare l'indirizzo del server
+    //int optval = 1; // opzione per consentire il riutilizzo immediato dell'indirizzo e della porta
 
     printf("Creazione del socket...\n");
+    // crea un socket TCP(SOCK_STREAM) IPv4 (AF_INET) con il protocollo predefinito (0)
     socket_file_descriptor = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_file_descriptor < 0) {
         perror("Error during creation socket");
-        exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE); // stampo un errore e esco con EXIT_FAILURE se non è possibile creare il socket
     }
+
+    /*
+    - l'opzione SO_REUSEADDR | SO_REUSEPORT permette al socket di riutilizzare l'indirizzo e la porta
+                assegnati più rapidamente, riducendo il tempo di inattività e migliorando l'efficienza
+                dell'applicazione nella gestione delle connessioni di rete
+    - SOL_SOCKET ->  livello di protocollo del socket
+    - &optval -> puntatore al valore da impostare per l'opzione
+
+    setsockopt -> permette di impostare delle opzioni su un socket già creato
+
 
     if (setsockopt(socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &optval, sizeof(optval))) {
         perror("Error during reuse");
         exit(EXIT_FAILURE);
     }
-
+*/
     printf("Binding del socket...\n");
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr(server_address);
-    server_addr.sin_port = htons(server_port);
-
-    if (bind(socket_file_descriptor, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    memset(&server_addr, 0, sizeof(server_addr)); // inizializzo la struttura server_addr per il bind del socket
+    server_addr.sin_family = AF_INET; // famiglia degli indirizzi: IPv4
+    server_addr.sin_addr.s_addr = inet_addr(server_address); // indirizzo IP del server
+    server_addr.sin_port = htons(server_port); // porta del server
+    //server_addr contiene quindi indirizzo IP e numero di porta
+    //BIND -> associazione di un indirizzo locale (IP e numero di porta) a un socket
+    if (bind(socket_file_descriptor, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) { //socket_file_descriptor rappresenta il socket stesso all'interno del programma
         perror("Error during binding");
         exit(EXIT_FAILURE);
     }
 
     printf("Avvio dell'ascolto sul socket...\n");
-    if (listen(socket_file_descriptor, 10) < 0) {
+    // metto il socket in ascolto per le connessioni in entrata
+    if (listen(socket_file_descriptor, MAX_CLIENTS) < 0) { //max 4 connessioni simultanee
         perror("Error listening for connection");
-        exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);// stampo un errore e esco con EXIT_FAILURE se non è possibile mettere il socket in ascolto
     }
 
     printf("Server in ascolto su %s:%d\n", server_address, server_port);
 
-    while (1) {
-        int *client_socket = malloc(sizeof(int));
-        struct sockaddr_in client_addr;
-        socklen_t client_addr_len = sizeof(client_addr);
-        printf("In attesa di connessione...\n");
+    while (1) { //ciclo while rimane in ascolto per nuove connessioni
+        int *client_socket = malloc(sizeof(int)); // alloca dinamicamente memoria per il file descriptor del client
+        struct sockaddr_in client_addr; // struttura per memorizzare l'indirizzo del client e lunghezza
+        socklen_t client_addr_len = sizeof(client_addr); //inizializzo la lunghezza dell'indirizzo del client
 
-        if((*client_socket = accept(socket_file_descriptor, (struct sockaddr *)&client_addr, &client_addr_len)) == -1) {
-            perror("Error accepting connection");
+        // accetta una nuova connessione
+        if((*client_socket = accept(socket_file_descriptor, (struct sockaddr *)&client_addr, &client_addr_len)) < 0) {
+            perror("Error accepting connection"); // Stampa un messaggio di errore se accept() restituisce -1
             close(socket_file_descriptor);
             free(client_socket);
             exit(EXIT_FAILURE);
         }
 
         printf("Client connesso da %s\n", inet_ntoa(client_addr.sin_addr));
-        
-        pthread_t thread;
-        pthread_create(&thread, NULL, thread_function, client_socket);
-        pthread_detach(thread);
+
+        //creazione di un thread per la gestione della connessione con il client
+        pthread_t thread; //dichiara un thread
+        pthread_create(&thread, NULL, thread_function, client_socket); // crea il thread passando il file descriptor del client
+        pthread_detach(thread); // il thread creato terminerà autonomamente
     }
 
     return 0;
 }
-
+/**
+ * ottiene il file descriptor del client che viene utilizzato per ricevere
+ * un comando specifico dal client e agire di conseguenza
+ * @param c_socket (file descriptor del client)
+ */
+//funzione che ritorna un void* e accetta un void*
 void *thread_function(void *arg) {
     int client_socket = *((int *)arg);
     free(arg);
@@ -125,15 +160,15 @@ void command_client(int client_socket) {
 
     if(strncmp(buffer,"w ",2) == 0){
         //funzione per scrivere un file sul server
-        function_for_upload(client_socket, path);
+        function_for_upload_w(client_socket, path);
         printf("buffer = '%s'\n", path);
     } else if(strncmp(buffer,"r ",2) == 0){
         //funzione per scrivere un file sul server
-        function_for_download(client_socket, path);
+        function_for_download_r(client_socket, path);
         //printf("buffer = '%s'\n", path);
     } else if(strncmp(buffer,"l ",2) == 0){
         //funzione per scrivere un file sul server
-        function_to_send_file(client_socket, path);
+        function_to_send_file_l(client_socket, path);
         //printf("buffer = '%s'\n", path);
     }
 
@@ -141,206 +176,175 @@ void command_client(int client_socket) {
     return;
 }
 
-int create_dir(const char *path)
-{
-    if(path == NULL){
-        return 0;
+/**
+ * La funzione create_dir è progettata per creare una gerarchia di directory in un percorso specificato (percorso_directory)
+ * @param percorso_directory
+ * @return -1 errore, 0  successo
+ */
+int create_dir(const char *percorso_directory) {
+    if (!percorso_directory){
+        return -1; //verifica se il percorso_directory è nullo
     }
-    char tmp[1024];
-    char *p=NULL;
-    size_t len;
+    char *percorso_duplicato = strdup(percorso_directory);//duplico il percorso_directory per lavorare su una copia
+    char *punt_a_directory = percorso_duplicato;//puntatore per iterare atraverso il percorso_directory
 
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    len=strlen(tmp);
-
-    if(tmp[len-1] == '/'){
-        tmp[len-1]=0;
-    }
-
-    for(p=tmp+1; *p; p++){
-        if(*p == '/'){
-            *p=0;
-
-            if(access(tmp, F_OK)!=0){
-                if(mkdir(tmp, 0777)!=0){
-                    perror("Errore nella creazione delle directory");
-                    return 1;
+    while (*punt_a_directory) { // itera fino alla fine del percorso_directory
+        if (*punt_a_directory == '/') { // se il puntatore trova uno slash
+            *punt_a_directory = '\0'; // termina temporaneamente la stringa per creare la directory
+            if (mkdir(percorso_duplicato, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) { // crea la directory con permessi rwx per l'utente, il gruppo e altri
+                struct stat st; // verifica se la creazione della directory ha fallito per un motivo diverso da EEXIST
+                if (stat(percorso_duplicato, &st) != 0 || !S_ISDIR(st.st_mode)) {
+                    fprintf(stderr, "Impossibile creare la directory %s\n", percorso_duplicato);
+                    free(percorso_duplicato);
+                    return -1;
                 }
-            }
-            *p='/';
+            }// ripristina il carattere slash nel percorso
+            *punt_a_directory = '/';
+        }// avanza nel percorso_directory
+        punt_a_directory++;
+    }
+    // crea l'ultima directory nel percorso, se non esiste già
+    if (mkdir(percorso_duplicato, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
+        // verifica se la creazione della directory ha fallito per un motivo diverso da EEXIST
+        struct stat st;
+        if (stat(percorso_duplicato, &st) != 0 || !S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "Impossibile creare la directory %s\n", percorso_duplicato);
+            free(percorso_duplicato);
+            return -1;
         }
     }
-
-    if(access(tmp, F_OK)!=0){
-        if(mkdir(tmp, 0777)!=0)
-        {
-            perror("Errore nella creazione delle directory");
-            return 1;
-        }
-    }
-
-    printf("cartella %s creata\n", path);
+    // libera la memoria allocata per il percorso_duplicato
+    free(percorso_duplicato);
+    printf("Percorso %s creato con successo\n", percorso_directory);
     return 0;
 }
 
-// Funzione per rimuovere i caratteri di nuova linea da una stringa e restituire una nuova stringa
+/**
+ * funzione per rimuovere i caratteri di nuova linea da una stringa
+ * @param stringa
+ */
 void rimuovi_accapo(char *stringa) {
-    int len = strlen(stringa);
-    int j = 0;
-    for (int i = 0; i < len; i++) {
-        if (stringa[i] != '\r' && stringa[i] != '\n') {
-            stringa[j++] = stringa[i];
+    char *puntatore_a_stringa = stringa; // puntatore per la nuova stringa
+    while (*stringa) {
+        if (*stringa != '\r' && *stringa != '\n') {
+            *puntatore_a_stringa++ = *stringa; // copia il carattere nella nuova stringa
         }
+        stringa++;
     }
-    stringa[j] = '\0'; // Termina la nuova stringa
+    *puntatore_a_stringa = '\0'; // termina la nuova stringa con il carattere nullo
 }
-
+/**
+ * verifica se un il path è valido
+ * @param path
+ * @return true se il percorso è valido, false altrimenti
+ */
 bool check_path(char* path) {
-
-    // Verifica se il percorso remoto è assoluto (inizia con '/')
+    // verifica se il percorso remoto è assoluto (inizia con '/')
     if (path[0] == '/') {
-        // Percorso assoluto
+        // è percorso assoluto
         fprintf(stderr, "Errore: è stato inserito un percorso assoluto\n");
         return false;
     }
-    // Il percorso è stato costruito correttamente
+    // il percorso è stato costruito correttamente
     return true;
 }
-
-// Verifica se è una directory il percorso
-bool check_dir(char *path)
-{
-    struct stat st;
-    if (stat(path, &st) == 0) {
-        if (S_ISDIR(st.st_mode)) { //S_ISDIR -> restituisce zero se il file è una directory
-            //il percorso è una directory, non un file
-            return false;
-        }
-    }
-    return true;
-}
-
-// Apre un file con il percorso specificato e la modalità specificata
-FILE* open_file(const char *path, const char *mode) {
-    FILE *file = fopen(path, mode);
-    if (file == NULL) {
-        perror("Error opening file");
-        exit(EXIT_FAILURE);
-    }
-    return file;
-}
-
-// Funzione per estrarre il percorso della directory dal percorso completo del file
-char *extract_directory_path(char *file_path) {
-    char *dir_path = strdup(file_path);
-    char *last_slash = strrchr(dir_path, '/');
-    if (last_slash != NULL) {
-        *last_slash = '\0';
-        return dir_path;
-    }
-
-    free(dir_path);
-    return NULL;
-}
-
-int function_for_upload(int client_socket, char *path) {
-    if (!check_path(path)) {
+/**
+ * funzione che gestisce l'upload di un file sul server, dal client
+ * @param client_socket
+ * @param path
+ * @return 0 successo, -1 insuccesso
+ */
+int function_for_upload_w(int client_socket, char *path) {
+    if (!check_path(path)) { //verifica che sia un path valido
         send(client_socket, "PATH_NON_VALIDO",15, 0);
         close(client_socket);
-        return 1;
+        return -1;
     }
 
-    if(!check_dir(path))
-    {
+    //verifica che il percorso non sia una directory
+    if(!check_dir(path)){
         send(client_socket, "IL_PATH_È_UNA_DIRECTORY",23, 0);
         close(client_socket);
-        return 1;
+        return -1;
     }
 
-    // Creo la directory base se non esiste già
+    // estrae il percorso della directory base (senza il nome del file)
     char* path_no_name = extract_directory_path(path);
 
-    create_dir(path_no_name);
+    create_dir(path_no_name); // crea la/le directory se non esiste/esistono già
     printf("Ricevuto nome file remoto: %s\n", path);
 
-    lockfile(path);
+    lockfile(path); // blocca il file per evitare accessi concorrenti
     printf("File locked\n");
 
-    FILE *file = open_file(path, "wb");
-
-    send(client_socket, "OK", 2, 0);
+    FILE *file = open_file(path, "wb"); //apre il file in modalità scrittura binaria
+    send(client_socket, "OK", 2, 0); // invia conferma al client che è possibile iniziare il trasferimento dai dati
 
     char buffer_in[BUFFER_SIZE];
     ssize_t bytes_received;
     // Continua a ricevere i dati rimanenti, se ce ne sono
     while ((bytes_received = recv(client_socket, buffer_in, sizeof(buffer_in), 0)) > 0) {
         if (strlen(buffer_in) > 0){
+            //scrivo i dati contenuti nel file
             fwrite(buffer_in, 1, bytes_received, file);
         }
     }
-
-    // Controllo degli errori di recv
+    
+    // controllo degli errori di recv
     if (bytes_received < 0) {
         perror("Error receiving file data");
         fclose(file);
         unlockfile(path);
         close(client_socket);
-        return 1;
+        return -1;
     }
-    // Chiudi il file dopo aver ricevuto tutti i dati
+    // chiude il file dopo aver ricevuto tutti i dati
     fclose(file);
     close(client_socket);
-    unlockfile(path);
-
-    printf("File %s salvato correttamente.\n", path);
+    unlockfile(path); //sblocca il file
     printf("File unlocked\n");
 
-    return 0;
+    printf("File %s salvato correttamente.\n", path);
+
+    return 0; //ritorna 0 per indicare successo
 }
 
-
-/*
-La funzione function_for_download:
-- gestisce la richiesta di download di un file dal server al client
+/**
+ * La funzione function_for_download_r gestisce la richiesta di download di un file dal server al client
+ * @param client_socket
+ * @param path
+ * @return 0 successo, -1 insuccesso
  */
-
-// Funzione per gestire il download dei file
-int function_for_download(int client_socket, char *path) {
-    if (!check_path(path)) {
+int function_for_download_r(int client_socket, char *path) {
+    if (!check_path(path)) { //verifica che sia un path valido
         send(client_socket, "PATH_NON_VALIDO",15, 0);
         close(client_socket);
-        return 1;
+        return -1;
     }
-
-    if(!check_dir(path))
+    if(!check_dir(path)) //verifica che il percorso non sia una directory
     {
         send(client_socket, "IL_PATH_È_UNA_DIRECTORY",23, 0);
         close(client_socket);
-        return 1;
+        return -1;
     }
-
-    // Debug: stampa il percorso completo del file che si sta cercando di aprire
-    printf("Percorso remoto ricevuto dal client: %s\n", path);
-
-    // Blocco del file
+    // blocca il file per evitare accessi concorrenti
     lockfile(path);
     printf("File locked\n");
 
-    // Apertura del file per la lettura in modalità binaria
+    // apertura del file per la lettura in modalità binaria
     FILE *file = open_file(path, "rb");
 
-    // Invio dei dati del file
+    // invio dei dati del file
     char buffer[BUFFER_SIZE];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
         if (strlen(buffer) > 0){
-            printf("numeri dei byte inviati -> %ld\n", bytes_read);
             if (send(client_socket, buffer, bytes_read, 0) < 0) {
                 perror("Error sending file data\n");
                 fclose(file);
                 close(client_socket);
-                unlockfile(path); // Assicurati di sbloccare il file anche in caso di errore
-                return 1; // Restituisce un valore intero in caso di errore
+                unlockfile(path);
+                return -1; //errore
             }
         }
     }
@@ -348,32 +352,26 @@ int function_for_download(int client_socket, char *path) {
     if (ferror(file)) {
         perror("Error reading file");
         fclose(file);
-        unlockfile(path); // Assicurati di sbloccare il file anche in caso di errore
-        return 1; // Restituisce un valore intero in caso di errore
+        unlockfile(path);
+        return -1;
     } else {
         printf("File %s inviato correttamente.\n", path);
     }
 
-    fclose(file);  // Chiudo il file alla fine della lettura
-    unlockfile(path);
+    fclose(file);  // chiude il file alla fine della lettura
+    unlockfile(path); // sblocca il file
     printf("File unlocked\n");
 
-    return 0; // Restituisce un valore intero di successo
+    return 0; // successo
 }
 
-
-/*
-La funzione function_to_send_file:
-- invia al client l'elenco dei file presenti nella directory specificata 
-- invia i dati al client tramite il socket specificato.
-- termina l'invio con un segnale di terminazione e chiude la connessione del socket.
-- gestisce errori di apertura del file/pipe e di invio dei dati
-1) client_socket -> socket del client a cui inviare i dati.
-2) path -> percorso della directory da cui ottenere l'elenco dei file.
+/**
+ * La funzione function_to_send_file_l invia al client l'elenco dei file presenti nella directory specificata
+ * @param client_socket -> socket del client a cui inviare i file
+ * @param path -> percorso della directory da cui ottenere l'elenco dei file
  */
-
-void function_to_send_file(int client_socket, char *path) {
-    if (!check_path(path)) {
+void function_to_send_file_l(int client_socket, char *path) {
+    if (!check_path(path)) { //verifica che sia un path valido
         send(client_socket, "PATH_NON_VALIDO",15, 0);
         close(client_socket);
         return ;
@@ -407,172 +405,93 @@ void function_to_send_file(int client_socket, char *path) {
     }
 
     pclose(fl); //chiudo la pipe
-
     //invio un segnale di terminazione
     send(client_socket, "\0", 1, 0);
-
     // chiudo la connessione del socket del client dopo aver inviato tutti i dati
     close(client_socket);
 }
 
-
-//questa funzione cerca un lock associato a un file specifico. Se non trova un lock esistente, ne crea uno nuovo
+/**
+ * get_file_lock cerca un lock associato a un file specifico.
+ * Se non trova un lock esistente, ne crea uno nuovo
+ * @param file
+ * @return puntatore al lock trovato
+ */
 FileLock *get_file_lock(const char *file) {
     FileLock *lock;
 
     pthread_mutex_lock(&file_locks_mutex); // acquisisco il mutex file_locks_mutex e blocco tutti i thread che tentano di acquisire lo stesso
+    //scorro lista dei FileLock
     for (lock = file_locks; lock != NULL; lock = lock->next) {
-        if (strcmp(lock->file, file) == 0) {
-            lock->ref_count++;
-            pthread_mutex_unlock(&file_locks_mutex);
-            return lock;
+        if (strcmp(lock->file, file) == 0) { //se trovo un lock associato al file specificato
+            lock->count_lock++; // incrementa il conteggio dei riferimenti al lock
+            pthread_mutex_unlock(&file_locks_mutex); //rilascia il mutex
+            return lock; //ritorna il puntatore al lock trovato
         }
     }
-
-    lock = (FileLock *)malloc(sizeof(FileLock));
+    // se il lock non è stato trovato, crea un nuovo FileLock
+    lock = (FileLock *)malloc(sizeof(FileLock)); // alloca memoria per il nuovo lock
     if (lock == NULL) {
         pthread_mutex_unlock(&file_locks_mutex);
         return NULL;
     }
+    // copia il percorso del file nel campo file del nuovo lock
     strncpy(lock->file, file, sizeof(lock->file) - 1);
-    lock->file[sizeof(lock->file) - 1] = '\0';
-    pthread_mutex_init(&lock->lock, NULL);
-    lock->ref_count = 1;
-    lock->next = file_locks;
-    file_locks = lock;
+    lock->file[sizeof(lock->file) - 1] = '\0'; //aggiungo terminatore di stringa per terminare correttamente il campo file
+    pthread_mutex_init(&lock->lock, NULL); // inizializza il mutex associato al lock
+    lock->count_lock = 1; // imposta il conteggio dei riferimenti a 1 (primo riferimento)
+    lock->next = file_locks; // collega il nuovo lock alla lista dei lock esistenti
+    file_locks = lock; // aggiorna il puntatore alla testa della lista di lock
 
-    pthread_mutex_unlock(&file_locks_mutex);
-    return lock;
+    pthread_mutex_unlock(&file_locks_mutex); //rilascia il mutex
+    return lock; //ritorna il puntatore al lock trovato
 }
 
+/**
+ * La funzione release_file_lock gestisce il rilascio di un lock associato a un file
+ * @param lock
+ */
 void release_file_lock(FileLock *lock) {
-    pthread_mutex_lock(&file_locks_mutex);  // Acquisisce il mutex globale per proteggere l'accesso alla lista dei lock dei file
-    lock->ref_count--;  // Decrementa il contatore di riferimento del lock
-    if (lock->ref_count == 0) {  // Se il contatore di riferimento è zero, il lock può essere rimosso
-        FileLock **pp = &file_locks;  // Inizializza un puntatore a puntatore al primo elemento della lista
-        while (*pp != lock) {  // Scorre la lista finché non trova il lock
-            pp = &(*pp)->next;  // Aggiorna il puntatore per puntare al prossimo elemento della lista
+    pthread_mutex_lock(&file_locks_mutex);  // acquisisce il mutex globale per proteggere l'accesso alla lista dei lock dei file
+    lock->count_lock--;  // decrementa il contatore di riferimento del lock
+    if (lock->count_lock == 0) {  // se il contatore di riferimento è zero, il lock può essere rimosso dalla lista dei FileLock
+        FileLock **p_a_p = &file_locks;  // inizializza un puntatore a puntatore al primo elemento della lista
+        while (*p_a_p != lock) {  // scorre la lista finché non trova il lock
+            p_a_p = &(*p_a_p)->next;  // aggiorna il puntatore per puntare al prossimo elemento della lista
         }
-        *pp = lock->next;  // Rimuove il nodo lock dalla lista
-        pthread_mutex_destroy(&lock->lock);  // Distrugge il mutex del lock
-        free(lock);  // Libera la memoria allocata per il lock
+        /*
+         * rimuove il lock dalla lista collegando il puntatore precedente (p_a_p) al
+         * successivo (lock->next) per saltare il lock da rimuovere.
+         */
+        *p_a_p = lock->next;
+
+        pthread_mutex_destroy(&lock->lock);  // distrugge il mutex del lock
+        free(lock);
     }
-    pthread_mutex_unlock(&file_locks_mutex);  // Rilascia il mutex globale
+    pthread_mutex_unlock(&file_locks_mutex);  // rilascia il mutex globale
 }
 
-
+/**
+ * La funzione lockfile prende in input un file (file) e tenta di ottenere un lock su di esso
+ * @param file
+ */
 void lockfile(const char *file) {
-    FileLock *lock = get_file_lock(file);
-    if (lock != NULL) {
+    FileLock *lock = get_file_lock(file); //richiede lock per il file
+    if (lock != NULL) { //per assicurarsi che il lock sia stato ottenuto correttamente
+        //passa l'indirizzo del mutex (&lock->lock) a pthread_mutex_lock che acquisisce il lock sul file
         pthread_mutex_lock(&lock->lock);
     }
 }
-
+/**
+ * La funzione unlockfile prende in input un file (file) e tenta di rilasciare il lock su di esso
+ * @param file
+ */
 void unlockfile(const char *file) {
+    //chiama get_file_lock per ottenere il puntatore alla struttura FileLock associata al file
     FileLock *lock = get_file_lock(file);
     if (lock != NULL) {
+        //chiama pthread_mutex_unlock passando l'indirizzo del mutex (&lock->lock) per rilasciare il lock sul file
         pthread_mutex_unlock(&lock->lock);
-        release_file_lock(lock);
+        release_file_lock(lock); //chiama release_file_lock(lock) per indicare che il lock può essere liberato
     }
 }
-/*
-
-esempio
-
-./muFTserver -a 127.0.0.5 -p 8080 -d /miao/bau/cip
-------------------------------------------------------
-getopt trova -a
-
--> opt impostato su a
--> optarg punta a 127.0.0.5
--> server address impostato a 127.0.0.5
------------------------------------------------
-getopt trova -p
-
--> opt impostato su p
--> optarg punta a 8080
-->atoi(optarg) converte in intero 8080 e assegna valore a server_port
--------------------------------------------------------
-
-getopt trova -d
-
--> opt impostato su d
--> optarg punta a /miao/bau/cip
--> server address impostato a /miao/bau/cip
-
-
------------------------------------------------------
-
-UTILI
-
------------------------------------------------
-ASCOLTO
-
-funzione di ascolto, ascolta la connessione su un socket e contrassegna il 
-socket a cui fa riferimento il socket_file_descriptor
-
-backlog-> numero di connessioni simultanee che un sistema può gestire
-int listen(int socket_file_descriptor, int backlog)
-------------------------------------------------
-ACCETTAZIONE
-
-funzione accettazione
-newsockfd= accept(socket_file_descriptor, (struct sockaddr *)&addr, &addrlen)
-
-memorizza il file descriptor nella variabile newsockfd che è del tipo int
-tutte le comunicazioni vengono effettuate sul newsockfd
-la funzione accept attende la funzione di connessione che viene generata dal lato client
--------------------------------------------------
-LETTURA
-
-int read(newsockfd, buffer, buffer_size)
-
-buffer è la stringa che viene passata cioè il messaggio
-il nostro messaggio non può essere maggiore di buffer_size
-------------------------------------------------
-SCRITTURA
-
-int write(newsockfd, buffer, buffer_size)
-
-------------------------------------------------
-
-PERMESSI
-
-0700 -> 
-
-Il primo numero 7 in ottale corrisponde a 111 in binario. 
-Questo significa:
-Il proprietario ha permessi di lettura (r), scrittura (w) e esecuzione (x).
-Il secondo e il terzo numero 0 in ottale corrispondono a 000 in binario. Questo significa:
-Il gruppo e tutti gli altri utenti non hanno alcun permesso (---).
-
---------------------------------------------------
-Spiegazione Dettagliata di (struct sockaddr *)&client_addr
-
-1) Struttura struct sockaddr_in:
-
-- struct sockaddr_in è una struttura utilizzata per rappresentare un indirizzo IP e 
-    una porta nella programmazione di rete in C. È specificamente progettata per supportare indirizzi IPv4.
-
-2) Variabile client_addr di tipo struct sockaddr_in:
-
--client_addr è una variabile di tipo struct sockaddr_in che viene utilizzata per contenere le 
-informazioni sull'indirizzo del client che si connette al server. Questo include l'indirizzo IP e la porta del client.
-
-
-3) Cast (struct sockaddr *)&client_addr:
-
-- Quando esegui il cast (struct sockaddr *)&client_addr, stai reinterpretando il puntatore della 
-variabile client_addr in un puntatore di tipo struct sockaddr *. 
-Questo è necessario quando devi passare client_addr a funzioni che accettano un parametro di tipo 
-generico struct sockaddr *, anziché struct sockaddr_in *.
-
-
-4) Utilizzo nei Parametri delle Funzioni di Rete:
-
-- Le funzioni come bind(), accept(), connect(), ecc., accettano un parametro di tipo struct sockaddr * per 
-rappresentare l'indirizzo del socket.
-Poiché client_addr è di tipo struct sockaddr_in, per utilizzarla con queste funzioni è necessario 
-eseguire il cast a struct sockaddr *.
-
-*/
